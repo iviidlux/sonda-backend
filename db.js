@@ -1,4 +1,4 @@
-// db.js
+// db.js (CommonJS)
 const mysql = require('mysql2/promise');
 
 function buildSSL() {
