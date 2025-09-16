@@ -23,31 +23,28 @@ router.get('/', auth, async (_req, res) => {
 // POST /api/instalaciones
 router.post('/', auth, async (req, res) => {
   const {
-    id_empresa_sucursal,
-    id_proceso,
+    id_usuario_creador,
     nombre_instalacion,
     fecha_instalacion,   // 'YYYY-MM-DD'
     estado_operativo,    // 'activo' | 'inactivo'
     descripcion,
-    tipo_uso             // 'acuicultura' | 'tratamiento' | 'otros'
+    tipo_uso             // 'acuicultura' | 'tratamiento' | 'otro'
   } = req.body || {};
 
-  if (!id_empresa_sucursal || !id_proceso || !nombre_instalacion || !fecha_instalacion || !estado_operativo || !tipo_uso) {
-    return res.status(400).json({ error: 'Faltan campos obligatorios (id_empresa_sucursal, id_proceso, nombre_instalacion, fecha_instalacion, estado_operativo, tipo_uso)' });
+  if (!id_usuario_creador || !nombre_instalacion || !fecha_instalacion || !estado_operativo || !tipo_uso) {
+    return res.status(400).json({ error: 'Faltan campos obligatorios (id_usuario_creador, nombre_instalacion, fecha_instalacion, estado_operativo, tipo_uso)' });
   }
 
   try {
-    // Validar FKs existen
-    const [[es]] = await pool.query('SELECT 1 ok FROM empresa_sucursal WHERE id_empresa_sucursal=?', [id_empresa_sucursal]);
-    const [[pr]] = await pool.query('SELECT 1 ok FROM procesos WHERE id_proceso=?', [id_proceso]);
-    if (!es) return res.status(400).json({ error: 'id_empresa_sucursal inválido' });
-    if (!pr) return res.status(400).json({ error: 'id_proceso inválido' });
+    // Validar FK usuario existe
+    const [[usr]] = await pool.query('SELECT 1 ok FROM usuario WHERE id_usuario=?', [id_usuario_creador]);
+    if (!usr) return res.status(400).json({ error: 'id_usuario_creador inválido' });
 
     const [ins] = await pool.query(
       `INSERT INTO instalacion
-        (id_empresa_sucursal, nombre_instalacion, fecha_instalacion, estado_operativo, descripcion, tipo_uso, id_proceso)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id_empresa_sucursal, nombre_instalacion, fecha_instalacion, estado_operativo, descripcion || '', tipo_uso, id_proceso]
+        (id_usuario_creador, nombre, fecha_instalacion, estado, uso, descripcion)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id_usuario_creador, nombre_instalacion, fecha_instalacion, estado_operativo, tipo_uso, descripcion || '']
     );
 
     const [row] = await pool.query(
