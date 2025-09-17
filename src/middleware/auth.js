@@ -1,18 +1,18 @@
 // src/middleware/auth.js
 const jwt = require('jsonwebtoken');
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 
-function auth(req, res, next) {
+module.exports = function auth(req, res, next) {
+  const h = req.headers.authorization || '';
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  if (!m) return res.status(401).json({ error: 'Token requerido' });
+
   try {
-    const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-    if (!token) return res.status(401).json({ error: 'Token requerido' });
-
-    const payload = jwt.verify(token, process.env.JWT_SECRET || 'secret');
-    req.user = payload; // { id_usuario, correo, id_rol }
+    const payload = jwt.verify(m[1], JWT_SECRET);
+    // payload: { id_usuario, id_rol, rol }
+    req.user = payload;
     next();
   } catch (e) {
-    return res.status(401).json({ error: 'Token inválido', detail: e.message });
+    return res.status(401).json({ error: 'Token inválido o expirado' });
   }
-}
-
-module.exports = auth;
+};
