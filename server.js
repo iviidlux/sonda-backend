@@ -17,6 +17,8 @@ app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 app.use('/auth', require('./src/routes/auth'));                    // registro / login
 app.use('/api/instalaciones', require('./src/routes/instalaciones')); // CRUD instalaciones
 app.use('/api/seed', require('./src/routes/seed'));                // crea datos mínimos para probar
+app.use('/api/procesos', require('./src/routes/procesos'));
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
