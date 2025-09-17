@@ -3,6 +3,7 @@ const router = require('express').Router();
 const pool = require('../../db');
 const auth = require('../middleware/auth');
 
+// listar
 router.get('/', auth, async (_req, res) => {
   try {
     const [rows] = await pool.query(
@@ -18,16 +19,17 @@ router.get('/', auth, async (_req, res) => {
   }
 });
 
+// crear
 router.post('/', auth, async (req, res) => {
   try {
-    const id_usuario_creador = req.user?.id_usuario ?? null;
+    const id_usuario_creador = req.user?.id_usuario || null;
     const {
       id_empresa = null,
       nombre,
-      fecha_instalacion,
-      estado = 'activo',
-      uso = 'acuicultura',
-      descripcion = ''
+      fecha_instalacion, // 'YYYY-MM-DD'
+      estado = 'activo',  // ENUM('activo','inactivo')
+      uso = 'acuicultura',// ENUM('acuicultura','tratamiento','otro')
+      descripcion = '',
     } = req.body || {};
 
     if (!nombre || !fecha_instalacion) {
