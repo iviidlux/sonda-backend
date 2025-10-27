@@ -1,17 +1,17 @@
-// src/routes/procesos.js
+// src/routes/procesos.js - COMPLETAMENTE ACTUALIZADO
 const router = require('express').Router();
 const pool = require('../../db');
 const auth = require('../middleware/auth');
 
-// Crear proceso
+// Crear proceso - ACTUALIZADO
 router.post('/', auth, async (req, res) => {
   try {
     const {
       id_instalacion,
       id_especie,
-      fecha_inicio,             // 'YYYY-MM-DD' (obligatoria)
-      fecha_final = null,       // opcional
-      estado = 'activo',        // ENUM('activo','finalizado','pausado')
+      fecha_inicio,
+      fecha_final = null,
+      estado = 'activo',
       notas = null,
     } = req.body || {};
 
@@ -20,8 +20,7 @@ router.post('/', auth, async (req, res) => {
     }
 
     const [ins] = await pool.query(
-      `INSERT INTO procesos
-        (id_instalacion, id_especie, fecha_inicio, fecha_final, estado, notas)
+      `INSERT INTO procesos (id_instalacion, id_especie, fecha_inicio, fecha_final, estado, notas)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [id_instalacion, id_especie, fecha_inicio, fecha_final, estado, notas]
     );
@@ -34,14 +33,14 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-// (opcional) listar por instalación
+// Listar procesos por instalación - ACTUALIZADO para usar especies
 router.get('/por-instalacion/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
     const [rows] = await pool.query(
-      `SELECT p.*, e.nombre_comun AS especie
+      `SELECT p.*, e.nombre_comun AS especie, e.nombre_cientifico
        FROM procesos p
-       JOIN catalogo_especies e ON e.id_especie = p.id_especie
+       JOIN especies e ON e.id_especie = p.id_especie
        WHERE p.id_instalacion = ?
        ORDER BY p.id_proceso DESC`,
       [id]
@@ -49,6 +48,20 @@ router.get('/por-instalacion/:id', auth, async (req, res) => {
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: 'No se pudo listar procesos', detail: e.message });
+  }
+});
+
+// Listar especies disponibles - NUEVO ENDPOINT
+router.get('/especies', auth, async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id_especie, nombre_comun, nombre_cientifico, descripcion
+       FROM especies 
+       ORDER BY nombre_comun`
+    );
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: 'No se pudo listar especies', detail: e.message });
   }
 });
 
