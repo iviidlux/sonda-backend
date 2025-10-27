@@ -1,9 +1,8 @@
-// src/routes/instalaciones.js - COMPLETAMENTE ACTUALIZADO
 const router = require('express').Router();
 const pool = require('../../db');
 const auth = require('../middleware/auth');
 
-// Listar instalaciones - ACTUALIZADO para nuevo esquema
+// Listar instalaciones
 router.get('/', auth, async (_req, res) => {
   try {
     const [rows] = await pool.query(
@@ -27,7 +26,7 @@ router.get('/', auth, async (_req, res) => {
   }
 });
 
-// Crear instalación - ACTUALIZADO
+// Crear instalación
 router.post('/', auth, async (req, res) => {
   try {
     const {
@@ -60,7 +59,7 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-// Listar sucursales disponibles - NUEVO ENDPOINT
+// Listar sucursales disponibles
 router.get('/sucursales', auth, async (_req, res) => {
   try {
     const [rows] = await pool.query(
