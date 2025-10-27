@@ -1,16 +1,24 @@
-// src/routes/instalaciones.js
+// src/routes/instalaciones.js - COMPLETAMENTE ACTUALIZADO
 const router = require('express').Router();
 const pool = require('../../db');
 const auth = require('../middleware/auth');
 
-// listar
+// Listar instalaciones - ACTUALIZADO para nuevo esquema
 router.get('/', auth, async (_req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT 
-         i.id_instalacion, i.id_usuario_creador, i.id_empresa,
-         i.nombre, i.fecha_instalacion, i.estado, i.uso, i.descripcion
+         i.id_instalacion,
+         i.id_empresa_sucursal,
+         i.nombre_instalacion as nombre,
+         i.descripcion,
+         i.fecha_creacion,
+         es.nombre_sucursal,
+         e.nombre as empresa_nombre
        FROM instalacion i
+       JOIN empresa_sucursal es ON i.id_empresa_sucursal = es.id_empresa_sucursal
+       JOIN empresa e ON es.id_empresa = e.id_empresa
+       WHERE es.estado_registro = 'activa'
        ORDER BY i.id_instalacion DESC`
     );
     res.json(rows);
@@ -19,34 +27,52 @@ router.get('/', auth, async (_req, res) => {
   }
 });
 
-// crear
+// Crear instalación - ACTUALIZADO
 router.post('/', auth, async (req, res) => {
   try {
-    const id_usuario_creador = req.user?.id_usuario || null;
     const {
-      id_empresa = null,
-      nombre,
-      fecha_instalacion, // 'YYYY-MM-DD'
-      estado = 'activo',  // ENUM('activo','inactivo')
-      uso = 'acuicultura',// ENUM('acuicultura','tratamiento','otro')
+      id_empresa_sucursal = 1, // Usar primera sucursal por defecto
+      nombre_instalacion,
       descripcion = '',
     } = req.body || {};
 
-    if (!nombre || !fecha_instalacion) {
-      return res.status(400).json({ error: 'nombre y fecha_instalacion son obligatorios' });
+    if (!nombre_instalacion) {
+      return res.status(400).json({ error: 'nombre_instalacion es obligatorio' });
     }
 
     const [ins] = await pool.query(
-      `INSERT INTO instalacion
-        (id_usuario_creador, id_empresa, nombre, fecha_instalacion, estado, uso, descripcion)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id_usuario_creador, id_empresa, nombre, fecha_instalacion, estado, uso, descripcion]
+      `INSERT INTO instalacion (id_empresa_sucursal, nombre_instalacion, descripcion, fecha_creacion)
+       VALUES (?, ?, ?, NOW())`,
+      [id_empresa_sucursal, nombre_instalacion, descripcion]
     );
 
-    const [row] = await pool.query(`SELECT * FROM instalacion WHERE id_instalacion = ?`, [ins.insertId]);
+    const [row] = await pool.query(
+      `SELECT i.*, es.nombre_sucursal, e.nombre as empresa_nombre
+       FROM instalacion i
+       JOIN empresa_sucursal es ON i.id_empresa_sucursal = es.id_empresa_sucursal
+       JOIN empresa e ON es.id_empresa = e.id_empresa
+       WHERE i.id_instalacion = ?`, [ins.insertId]
+    );
+    
     res.status(201).json(row[0]);
   } catch (e) {
     res.status(500).json({ error: 'No se pudo crear la instalación', detail: e.message });
+  }
+});
+
+// Listar sucursales disponibles - NUEVO ENDPOINT
+router.get('/sucursales', auth, async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT es.id_empresa_sucursal, es.nombre_sucursal, e.nombre as empresa_nombre
+       FROM empresa_sucursal es
+       JOIN empresa e ON es.id_empresa = e.id_empresa
+       WHERE es.estado_registro = 'activa'
+       ORDER BY e.nombre, es.nombre_sucursal`
+    );
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: 'No se pudo listar sucursales', detail: e.message });
   }
 });
 
