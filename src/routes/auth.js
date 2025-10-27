@@ -1,4 +1,3 @@
-// src/routes/auth.js - ACTUALIZADO
 const router = require('express').Router();
 const pool = require('../../db');
 const bcrypt = require('bcryptjs');
@@ -7,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 const JWT_EXPIRES = '7d';
 
-// Registro de usuario - ACTUALIZADO
+// Registro de usuario
 router.post('/register', async (req, res) => {
   try {
     const {
@@ -28,14 +27,14 @@ router.post('/register', async (req, res) => {
 
     const hash = await bcrypt.hash(password, 10);
 
-    // CAMBIO: nuevo esquema usa 'activo' BOOLEAN, no 'activo' STRING
+    // CAMBIO: usar nuevo esquema con 'activo' BOOLEAN
     const [ins] = await pool.query(
       `INSERT INTO usuario (correo, password_hash, nombre_completo, id_rol, activo)
        VALUES (?, ?, ?, ?, true)`,
       [correo, hash, nombre_completo, id_rol]
     );
 
-    // CAMBIO: usar tipo_rol en lugar de rol
+    // CAMBIO: usar tipo_rol
     const [row] = await pool.query(
       `SELECT u.id_usuario, u.id_rol, u.nombre_completo, u.correo, u.activo, r.nombre AS rol_nombre
        FROM usuario u JOIN tipo_rol r ON r.id_rol = u.id_rol
@@ -66,7 +65,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// Login - ACTUALIZADO
+// Login
 router.post('/login', async (req, res) => {
   try {
     const { correo, password } = req.body || {};
@@ -74,7 +73,7 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'correo y password son obligatorios' });
     }
 
-    // CAMBIO: usar tipo_rol y campo activo BOOLEAN
+    // CAMBIO: usar tipo_rol
     const [rows] = await pool.query(
       `SELECT u.*, r.nombre AS rol_nombre
        FROM usuario u JOIN tipo_rol r ON r.id_rol = u.id_rol
@@ -84,7 +83,7 @@ router.post('/login', async (req, res) => {
     if (!rows.length) return res.status(401).json({ error: 'Credenciales inválidas' });
 
     const u = rows[0];
-    // CAMBIO: activo es BOOLEAN, no STRING
+    // CAMBIO: activo es BOOLEAN
     if (!u.activo) return res.status(403).json({ error: 'Usuario inactivo' });
 
     const ok = await bcrypt.compare(password, u.password_hash);
