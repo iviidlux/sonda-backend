@@ -292,10 +292,10 @@ app.get('/whoami', (_req, res) => {
 });
 
 // =====================
-// TAREAS PROGRAMADAS  
+// TAREAS PROGRAMADAS (CORREGIDO)
 // =====================
 
-// Listar tareas por instalación
+// Listar tareas por instalación  
 app.get('/api/tareas-programadas/:idInstalacion', authMiddleware, asyncHandler(async (req, res) => {
   const userId = Number(req.user?.uid || 0);
   const idInstalacion = Number(req.params.idInstalacion) || 0;
@@ -315,37 +315,25 @@ app.get('/api/tareas-programadas/:idInstalacion', authMiddleware, asyncHandler(a
     return res.status(403).json({ message: 'Sin permiso para esta instalación' });
   }
 
-  // Buscar tareas programadas (ajustada a tu schema real)
-  // Nota: Puede que necesites ajustar el nombre de la tabla si es diferente
-  try {
-    const [rows] = await pool.query(
-      `SELECT 
-        tp.id_tarea_programada AS id,
-        tp.nombre,
-        tp.descripcion,
-        tp.tipo,
-        tp.hora_inicio,
-        tp.hora_fin,
-        tp.activo,
-        tp.fecha_creacion AS creado
-      FROM tarea_programada tp 
-      WHERE tp.id_instalacion = ? 
-      ORDER BY tp.fecha_creacion DESC`,
-      [idInstalacion]
-    );
+  // Buscar tareas programadas (NOMBRES CORRECTOS DE COLUMNAS)
+  const [rows] = await pool.query(
+    `SELECT 
+      tp.id_tarea AS id,
+      tp.nombre,
+      'Sin descripción' AS descripcion,
+      tp.tipo,
+      tp.hora_inicio,
+      tp.hora_fin,
+      tp.activo,
+      tp.creado
+    FROM tarea_programada tp 
+    WHERE tp.id_instalacion = ? 
+    ORDER BY tp.creado DESC`,
+    [idInstalacion]
+  );
 
-    console.log('✅ Tareas encontradas:', rows.length);
-    res.json(rows);
-
-  } catch (dbError) {
-    console.error('❌ Error buscando tareas:', dbError.message);
-    // Si la tabla no existe, devolver array vacío
-    if (dbError.code === 'ER_NO_SUCH_TABLE') {
-      console.log('ℹ️ Tabla tarea_programada no existe, devolviendo array vacío');
-      return res.json([]);
-    }
-    res.status(500).json({ message: 'Error al buscar tareas programadas' });
-  }
+  console.log('✅ Tareas encontradas:', rows.length);
+  res.json(rows);
 }));
 
 // Crear tarea programada
@@ -357,10 +345,13 @@ app.post('/api/tareas-programadas', authMiddleware, asyncHandler(async (req, res
   const {
     id_instalacion,
     nombre,
-    descripcion = '',
     tipo = 'horario',
     hora_inicio,
     hora_fin,
+    oxigeno_min,
+    oxigeno_max,
+    duracion_minutos,
+    accion = 'activar_aerador',
     activo = true
   } = req.body;
   
@@ -380,39 +371,30 @@ app.post('/api/tareas-programadas', authMiddleware, asyncHandler(async (req, res
     return res.status(403).json({ message: 'Sin permiso para esta instalación' });
   }
 
-  try {
-    const [result] = await pool.query(
-      `INSERT INTO tarea_programada 
-       (id_instalacion, nombre, descripcion, tipo, hora_inicio, hora_fin, activo)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id_instalacion, nombre, descripcion, tipo, hora_inicio, hora_fin, activo ? 1 : 0]
-    );
+  const [result] = await pool.query(
+    `INSERT INTO tarea_programada 
+     (id_instalacion, nombre, tipo, hora_inicio, hora_fin, oxigeno_min, oxigeno_max, duracion_minutos, accion, activo)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id_instalacion, nombre, tipo, hora_inicio, hora_fin, oxigeno_min, oxigeno_max, duracion_minutos, accion, activo ? 1 : 0]
+  );
 
-    const [rows] = await pool.query(
-      `SELECT 
-        tp.id_tarea_programada AS id,
-        tp.nombre,
-        tp.descripcion,
-        tp.tipo,
-        tp.hora_inicio,
-        tp.hora_fin,
-        tp.activo,
-        tp.fecha_creacion AS creado
-      FROM tarea_programada tp 
-      WHERE tp.id_tarea_programada = ?`,
-      [result.insertId]
-    );
+  const [rows] = await pool.query(
+    `SELECT 
+      tp.id_tarea AS id,
+      tp.nombre,
+      'Sin descripción' AS descripcion,
+      tp.tipo,
+      tp.hora_inicio,
+      tp.hora_fin,
+      tp.activo,
+      tp.creado
+    FROM tarea_programada tp 
+    WHERE tp.id_tarea = ?`,
+    [result.insertId]
+  );
 
-    console.log('✅ Tarea programada creada:', rows[0]);
-    res.status(201).json(rows[0]);
-
-  } catch (dbError) {
-    console.error('❌ Error creando tarea:', dbError.message);
-    if (dbError.code === 'ER_NO_SUCH_TABLE') {
-      return res.status(501).json({ message: 'Funcionalidad de tareas programadas no implementada aún' });
-    }
-    res.status(500).json({ message: 'Error al crear tarea programada' });
-  }
+  console.log('✅ Tarea programada creada:', rows[0]);
+  res.status(201).json(rows[0]);
 }));
 
 // Eliminar tarea programada
@@ -425,38 +407,29 @@ app.delete('/api/tareas-programadas/:id', authMiddleware, asyncHandler(async (re
 
   console.log('🗑️ Eliminando tarea:', tareaId, 'usuario:', userId);
 
-  try {
-    // Verificar permisos (que la tarea pertenezca a una instalación del usuario)
-    const [permisos] = await pool.query(
-      `SELECT 1 FROM tarea_programada tp
-       JOIN asignacion_usuario au ON au.id_instalacion = tp.id_instalacion
-       WHERE tp.id_tarea_programada = ? AND au.id_usuario = ?`,
-      [tareaId, userId]
-    );
+  // Verificar permisos (que la tarea pertenezca a una instalación del usuario)
+  const [permisos] = await pool.query(
+    `SELECT 1 FROM tarea_programada tp
+     JOIN asignacion_usuario au ON au.id_instalacion = tp.id_instalacion
+     WHERE tp.id_tarea = ? AND au.id_usuario = ?`,
+    [tareaId, userId]
+  );
 
-    if (permisos.length === 0) {
-      return res.status(403).json({ message: 'Sin permiso para eliminar esta tarea' });
-    }
-
-    const [result] = await pool.query(
-      `DELETE FROM tarea_programada WHERE id_tarea_programada = ?`,
-      [tareaId]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Tarea no encontrada' });
-    }
-
-    console.log('✅ Tarea eliminada');
-    res.json({ ok: true, id: tareaId });
-
-  } catch (dbError) {
-    console.error('❌ Error eliminando tarea:', dbError.message);
-    if (dbError.code === 'ER_NO_SUCH_TABLE') {
-      return res.status(501).json({ message: 'Funcionalidad de tareas programadas no implementada aún' });
-    }
-    res.status(500).json({ message: 'Error al eliminar tarea programada' });
+  if (permisos.length === 0) {
+    return res.status(403).json({ message: 'Sin permiso para eliminar esta tarea' });
   }
+
+  const [result] = await pool.query(
+    `DELETE FROM tarea_programada WHERE id_tarea = ?`,
+    [tareaId]
+  );
+
+  if (result.affectedRows === 0) {
+    return res.status(404).json({ message: 'Tarea no encontrada' });
+  }
+
+  console.log('✅ Tarea eliminada');
+  res.json({ ok: true, id: tareaId });
 }));
 
 
