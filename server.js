@@ -18,6 +18,7 @@ app.use('/auth', require('./src/routes/auth'));                    // registro /
 app.use('/api/instalaciones', require('./src/routes/instalaciones')); // CRUD instalaciones
 app.use('/api/seed', require('./src/routes/seed'));                // crea datos mínimos para probar
 app.use('/api/procesos', require('./src/routes/procesos'));
+app.use('/api/tareas-programadas', require('./src/routes/tareas'));
 
 
 const PORT = process.env.PORT || 3000;
