@@ -1,9 +1,8 @@
-// src/routes/procesos.js - COMPLETAMENTE ACTUALIZADO
 const router = require('express').Router();
 const pool = require('../../db');
 const auth = require('../middleware/auth');
 
-// Crear proceso - ACTUALIZADO
+// Crear proceso
 router.post('/', auth, async (req, res) => {
   try {
     const {
@@ -33,7 +32,7 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-// Listar procesos por instalación - ACTUALIZADO para usar especies
+// Listar procesos por instalación
 router.get('/por-instalacion/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -51,7 +50,7 @@ router.get('/por-instalacion/:id', auth, async (req, res) => {
   }
 });
 
-// Listar especies disponibles - NUEVO ENDPOINT
+// Listar especies disponibles
 router.get('/especies', auth, async (_req, res) => {
   try {
     const [rows] = await pool.query(
