@@ -1,4 +1,4 @@
-// src/routes/auth.js
+// src/routes/auth.js - ACTUALIZADO
 const router = require('express').Router();
 const pool = require('../../db');
 const bcrypt = require('bcryptjs');
@@ -7,40 +7,41 @@ const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 const JWT_EXPIRES = '7d';
 
-// Registro de usuario
+// Registro de usuario - ACTUALIZADO
 router.post('/register', async (req, res) => {
   try {
     const {
-      nombre_completo, // obligatorio
-      correo,          // obligatorio (UNIQUE)
-      password,        // obligatorio
+      nombre_completo,
+      correo,
+      password,
       telefono = null,
-      id_rol = 2,      // por default admin_cuenta
+      id_rol = 2, // admin_cuenta por defecto
     } = req.body || {};
 
     if (!nombre_completo || !correo || !password) {
       return res.status(400).json({ error: 'nombre_completo, correo y password son obligatorios' });
     }
 
-    // ¿existe ya ese correo?
+    // Verificar correo existente
     const [ex] = await pool.query('SELECT id_usuario FROM usuario WHERE correo = ? LIMIT 1', [correo]);
     if (ex.length) return res.status(409).json({ error: 'El correo ya está registrado' });
 
     const hash = await bcrypt.hash(password, 10);
 
+    // CAMBIO: nuevo esquema usa 'activo' BOOLEAN, no 'activo' STRING
     const [ins] = await pool.query(
-      `INSERT INTO usuario (id_rol, nombre_completo, correo, password_hash, telefono, estado)
-       VALUES (?, ?, ?, ?, ?, 'activo')`,
-      [id_rol, nombre_completo, correo, hash, telefono]
+      `INSERT INTO usuario (correo, password_hash, nombre_completo, id_rol, activo)
+       VALUES (?, ?, ?, ?, true)`,
+      [correo, hash, nombre_completo, id_rol]
     );
 
+    // CAMBIO: usar tipo_rol en lugar de rol
     const [row] = await pool.query(
-      `SELECT u.id_usuario, u.id_rol, u.nombre_completo, u.correo, u.estado, r.nombre AS rol_nombre
-       FROM usuario u JOIN rol r ON r.id_rol = u.id_rol
+      `SELECT u.id_usuario, u.id_rol, u.nombre_completo, u.correo, u.activo, r.nombre AS rol_nombre
+       FROM usuario u JOIN tipo_rol r ON r.id_rol = u.id_rol
        WHERE u.id_usuario = ?`, [ins.insertId]
     );
 
-    // token inmediato tras registro
     const u = row[0];
     const token = jwt.sign(
       { id_usuario: u.id_usuario, id_rol: u.id_rol, rol: u.rol_nombre },
@@ -56,7 +57,7 @@ router.post('/register', async (req, res) => {
         rol: u.rol_nombre,
         nombre_completo: u.nombre_completo,
         correo: u.correo,
-        estado: u.estado,
+        activo: u.activo,
       },
     });
   } catch (e) {
@@ -65,7 +66,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// Login
+// Login - ACTUALIZADO
 router.post('/login', async (req, res) => {
   try {
     const { correo, password } = req.body || {};
@@ -73,15 +74,18 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'correo y password son obligatorios' });
     }
 
+    // CAMBIO: usar tipo_rol y campo activo BOOLEAN
     const [rows] = await pool.query(
       `SELECT u.*, r.nombre AS rol_nombre
-       FROM usuario u JOIN rol r ON r.id_rol = u.id_rol
+       FROM usuario u JOIN tipo_rol r ON r.id_rol = u.id_rol
        WHERE u.correo = ? LIMIT 1`, [correo]
     );
+    
     if (!rows.length) return res.status(401).json({ error: 'Credenciales inválidas' });
 
     const u = rows[0];
-    if (u.estado !== 'activo') return res.status(403).json({ error: 'Usuario inactivo' });
+    // CAMBIO: activo es BOOLEAN, no STRING
+    if (!u.activo) return res.status(403).json({ error: 'Usuario inactivo' });
 
     const ok = await bcrypt.compare(password, u.password_hash);
     if (!ok) return res.status(401).json({ error: 'Credenciales inválidas' });
@@ -100,7 +104,7 @@ router.post('/login', async (req, res) => {
         rol: u.rol_nombre,
         nombre_completo: u.nombre_completo,
         correo: u.correo,
-        estado: u.estado,
+        activo: u.activo,
       },
     });
   } catch (e) {
