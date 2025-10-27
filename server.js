@@ -19,7 +19,7 @@ const pool = mysql.createPool({
   host: process.env.DB_HOST || '127.0.0.1',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASS || 'Mvergel',
-  database: process.env.DB_NAME || 'u889902058_sonda0109_local',
+  database: process.env.DB_NAME || 'aqua_sonda', // Usar el nombre correcto de tu DB
   waitForConnections: true,
   connectionLimit: 10,
   dateStrings: true,
@@ -36,7 +36,7 @@ const authMiddleware = (req, res, next) => {
   if (!token) return res.status(401).json({ message: 'Token requerido' });
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET); // { uid, rol, correo }
+    const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
     next();
   } catch (err) {
@@ -60,19 +60,14 @@ app.get('/', (_req, res) => {
       '/api/instalaciones (GET/POST)',
       '/api/instalaciones/:id/sensores',
       '/api/lecturas/resumen',
-      '/api/instalaciones/ping',
     ],
   });
 });
 
 app.get('/debug/db-ping', asyncHandler(async (_req, res) => {
   const [rows] = await pool.query('SELECT 1 AS ok');
-  res.json({ ok: rows[0].ok, db: (process.env.DB_NAME || 'u889902058_sonda0109_local') });
+  res.json({ ok: rows[0].ok, db: 'aqua_sonda' });
 }));
-
-app.get('/api/instalaciones/ping', (_req, res) => {
-  res.json({ ok: true, route: '/api/instalaciones/ping' });
-});
 
 // =====================
 // AUTH (USANDO COLUMNA ACTIVO)
@@ -80,7 +75,6 @@ app.get('/api/instalaciones/ping', (_req, res) => {
 app.post(['/api/auth/register', '/auth/register'], asyncHandler(async (req, res) => {
   const { nombre_completo, correo, password, id_rol, telefono } = req.body;
   
-  // Mapeamos los parámetros que puede enviar el cliente Flutter
   const nombre = nombre_completo || req.body.nombre;
   const idRol = id_rol || req.body.idRol || req.body.rol;
   
@@ -88,7 +82,6 @@ app.post(['/api/auth/register', '/auth/register'], asyncHandler(async (req, res)
     return res.status(400).json({ message: 'Campos incompletos' });
   }
 
-  // Verificar que el rol existe
   const [roles] = await pool.query('SELECT id_rol FROM tipo_rol WHERE id_rol = ? OR nombre = ?', [idRol, idRol]);
   if (roles.length === 0) return res.status(400).json({ message: 'Rol inválido' });
   const finalIdRol = roles[0].id_rol;
@@ -98,12 +91,11 @@ app.post(['/api/auth/register', '/auth/register'], asyncHandler(async (req, res)
 
   const hash = await bcrypt.hash(password, 10);
   const [result] = await pool.query(
-    `INSERT INTO usuario (id_rol, nombre_completo, correo, telefono, password_hash, activo)
-     VALUES (?, ?, ?, ?, ?, 1)`,
-    [finalIdRol, nombre, correo, telefono || null, hash]
+    `INSERT INTO usuario (id_rol, nombre_completo, correo, password_hash, activo)
+     VALUES (?, ?, ?, ?, 1)`,
+    [finalIdRol, nombre, correo, hash]
   );
 
-  // Obtener el rol nombre para el token
   const [roleData] = await pool.query('SELECT nombre FROM tipo_rol WHERE id_rol = ?', [finalIdRol]);
   const rolNombre = roleData[0]?.nombre || 'usuario';
 
@@ -134,49 +126,11 @@ app.post(['/api/auth/login', '/auth/login'], asyncHandler(async (req, res) => {
   res.json({ token, nombre: u.nombre_completo, rol: u.rol, correo });
 }));
 
-// Cambiar contraseña
-app.post(['/api/auth/change-password', '/auth/change-password'], asyncHandler(async (req, res) => {
-  const { correo, currentPassword, newPassword } = req.body;
-  if (!correo || !currentPassword || !newPassword) {
-    return res.status(400).json({ message: 'Campos incompletos' });
-  }
-
-  const [rows] = await pool.query(
-    `SELECT id_usuario, password_hash, activo
-       FROM usuario
-      WHERE correo = ?`,
-    [correo]
-  );
-  if (rows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado' });
-  const u = rows[0];
-  if (u.activo !== 1) return res.status(403).json({ message: 'Usuario inactivo' });
-
-  const ok = await bcrypt.compare(currentPassword, u.password_hash);
-  if (!ok) return res.status(401).json({ message: 'Contraseña actual incorrecta' });
-
-  const newHash = await bcrypt.hash(newPassword, 10);
-  await pool.query('UPDATE usuario SET password_hash = ? WHERE id_usuario = ?', [newHash, u.id_usuario]);
-  res.json({ message: 'Contraseña actualizada' });
-}));
-
 // =====================
-// HOME: Lecturas resumidas
-// =====================
-app.get('/api/lecturas/resumen', asyncHandler(async (_req, res) => {
-  const [rows] = await pool.query(
-    `SELECT r.id_resumen, r.id_sensor_instalado, r.fecha, r.hora, r.promedio, r.registros
-       FROM resumen_lectura_horaria r
-      ORDER BY r.fecha DESC, r.hora DESC
-      LIMIT 20`
-  );
-  res.json(rows);
-}));
-
-// =====================
-// INSTALACIONES (FILTRADAS POR USUARIO)
+// INSTALACIONES (ADAPTADAS A TU SCHEMA REAL)
 // =====================
 
-// Listado de instalaciones filtrado por usuario autenticado
+// Listado de instalaciones - usando tabla asignacion_usuario para filtrar por usuario
 app.get('/api/instalaciones', authMiddleware, asyncHandler(async (req, res) => {
   const userId = Number(req.user?.uid || 0);
   if (!userId) return res.status(401).json({ message: 'No autenticado' });
@@ -186,39 +140,27 @@ app.get('/api/instalaciones', authMiddleware, asyncHandler(async (req, res) => {
         i.id_instalacion,
         i.nombre_instalacion AS nombre,
         COALESCE(NULLIF(i.descripcion,''), '') AS ubicacion,
-        i.estado_operativo AS estado,
+        'activo' AS estado,
         COALESCE(COUNT(si.id_sensor_instalado), 0) AS sensores
-       FROM instalacion i
-  LEFT JOIN sensor_instalado si ON si.id_instalacion = i.id_instalacion
-      WHERE COALESCE(i.estado_operativo, 'activo') <> 'eliminado'
-        AND (
-             i.id_usuario_creador = ? 
-             OR EXISTS (
-               SELECT 1 
-                 FROM usuario u 
-                WHERE u.id_usuario = ? 
-                  AND u.id_empresa IS NOT NULL 
-                  AND u.id_empresa = i.id_empresa
-             )
-        )
-   GROUP BY i.id_instalacion, i.nombre_instalacion, i.descripcion, i.estado_operativo
-   ORDER BY i.nombre_instalacion ASC`,
-    [userId, userId]
+     FROM instalacion i
+     JOIN asignacion_usuario au ON au.id_instalacion = i.id_instalacion
+     LEFT JOIN sensor_instalado si ON si.id_instalacion = i.id_instalacion
+     WHERE au.id_usuario = ?
+     GROUP BY i.id_instalacion, i.nombre_instalacion, i.descripcion
+     ORDER BY i.nombre_instalacion ASC`,
+    [userId]
   );
   res.json(rows);
 }));
 
-// Crear instalación (asigna al usuario creador y opcionalmente a su empresa)
+// Crear instalación
 app.post('/api/instalaciones', authMiddleware, asyncHandler(async (req, res) => {
   const userId = Number(req.user?.uid || 0);
   if (!userId) return res.status(401).json({ message: 'No autenticado' });
 
   const {
     nombre,
-    id_empresa,          // opcional desde el cliente
-    fecha_instalacion,   // opcional; si no viene, hoy
-    estado = 'activo',
-    uso = 'acuicultura',
+    id_empresa_sucursal = 1, // Usar sucursal por defecto
     descripcion = ''
   } = req.body || {};
 
@@ -226,255 +168,117 @@ app.post('/api/instalaciones', authMiddleware, asyncHandler(async (req, res) => 
     return res.status(400).json({ message: 'nombre requerido' });
   }
 
-  // Obtener empresa del usuario si no se especifica
-  let idEmpresa = id_empresa;
-  if (!idEmpresa) {
-    const [urows] = await pool.query(
-      'SELECT id_empresa FROM usuario WHERE id_usuario = ? LIMIT 1',
-      [userId]
-    );
-    idEmpresa = urows.length ? urows[0].id_empresa : null;
-  }
-
-  // Fecha por defecto hoy
-  const fechaFinal = fecha_instalacion || new Date().toISOString().slice(0,10); // yyyy-MM-dd
-
-  // Inserta usando las columnas reales de tu tabla
+  // Insertar instalación
   const [result] = await pool.query(
-    `INSERT INTO instalacion
-       (id_usuario_creador, id_empresa, nombre_instalacion, descripcion, estado_operativo, fecha_instalacion, tipo_uso)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      userId,
-      idEmpresa,
-      nombre.trim(),
-      descripcion || '',
-      estado || 'activo',
-      fechaFinal,
-      uso || 'acuicultura'
-    ]
+    `INSERT INTO instalacion (id_empresa_sucursal, nombre_instalacion, descripcion)
+     VALUES (?, ?, ?)`,
+    [id_empresa_sucursal, nombre.trim(), descripcion || '']
   );
 
-  // Devolver la instalación creada en el formato esperado por el cliente
+  // Asignar instalación al usuario que la creó
+  await pool.query(
+    `INSERT INTO asignacion_usuario (id_usuario, id_instalacion)
+     VALUES (?, ?)`,
+    [userId, result.insertId]
+  );
+
+  // Devolver la instalación creada
   const [rows] = await pool.query(
     `SELECT 
         i.id_instalacion AS id,
         i.nombre_instalacion AS nombre,
         COALESCE(NULLIF(i.descripcion,''), '') AS descripcion,
-        i.estado_operativo AS estado,
-        i.fecha_instalacion AS fechaInstalacion,
-        i.tipo_uso AS uso,
-        i.id_usuario_creador AS idUsuarioCreador,
-        i.id_empresa AS idEmpresa
+        'activo' AS estado,
+        i.fecha_creacion AS fechaInstalacion,
+        'acuicultura' AS uso,
+        ? AS idUsuarioCreador,
+        i.id_empresa_sucursal AS idEmpresa
      FROM instalacion i
-    WHERE i.id_instalacion = ?`,
-    [result.insertId]
+     WHERE i.id_instalacion = ?`,
+    [userId, result.insertId]
   );
 
   res.status(201).json(rows[0]);
 }));
 
-// Eliminación suave de instalación (marca estado_operativo='eliminado')
+// Eliminar instalación (soft delete simulado - remover asignación)
 app.delete('/api/instalaciones/:id', authMiddleware, asyncHandler(async (req, res) => {
   const userId = Number(req.user?.uid || 0);
   const id = Number(req.params.id) || 0;
   if (!userId) return res.status(401).json({ message: 'No autenticado' });
   if (!id) return res.status(400).json({ message: 'ID inválido' });
 
-  // Verificar que la instalación pertenezca al usuario
+  // Verificar permisos
   const [perm] = await pool.query(
-    `SELECT 1 FROM instalacion i
-     LEFT JOIN usuario u ON u.id_usuario = ?
-     WHERE i.id_instalacion = ?
-       AND (i.id_usuario_creador = ? OR (u.id_empresa IS NOT NULL AND u.id_empresa = i.id_empresa))
-     LIMIT 1`,
-    [userId, id, userId]
+    `SELECT 1 FROM asignacion_usuario WHERE id_usuario = ? AND id_instalacion = ?`,
+    [userId, id]
   );
   if (perm.length === 0) return res.status(403).json({ message: 'Sin permiso para eliminar esta instalación' });
 
+  // Remover asignación (soft delete)
   const [result] = await pool.query(
-    `UPDATE instalacion SET estado_operativo = 'eliminado' WHERE id_instalacion = ?`,
-    [id]
+    `DELETE FROM asignacion_usuario WHERE id_usuario = ? AND id_instalacion = ?`,
+    [userId, id]
   );
+
   if (result.affectedRows === 0) {
     return res.status(404).json({ message: 'Instalación no encontrada' });
   }
   res.json({ ok: true, id, estado: 'eliminado' });
 }));
 
-// =====================
-// TAREAS PROGRAMADAS (AERADOR)
-// =====================
-
-// Listar tareas por instalación
-app.get('/api/tareas-programadas/:idInstalacion', authMiddleware, asyncHandler(async (req, res) => {
-  const userId = Number(req.user?.uid || 0);
-  const idInstalacion = Number(req.params.idInstalacion) || 0;
-  if (!userId) return res.status(401).json({ message: 'No autenticado' });
-
-  // Verificar permisos sobre la instalación
-  const [perm] = await pool.query(
-    `SELECT 1 FROM instalacion i
-     LEFT JOIN usuario u ON u.id_usuario = ?
-     WHERE i.id_instalacion = ?
-       AND (i.id_usuario_creador = ? OR (u.id_empresa IS NOT NULL AND u.id_empresa = i.id_empresa))
-     LIMIT 1`,
-    [userId, idInstalacion, userId]
-  );
-  if (perm.length === 0) return res.status(403).json({ message: 'Sin permiso para esta instalación' });
-
-  const [rows] = await pool.query(
-    `SELECT * FROM tarea_programada WHERE id_instalacion = ? ORDER BY creado DESC`,
-    [idInstalacion]
-  );
-  res.json(rows);
-}));
-
-// Crear tarea programada
-app.post('/api/tareas-programadas', authMiddleware, asyncHandler(async (req, res) => {
-  const userId = Number(req.user?.uid || 0);
-  if (!userId) return res.status(401).json({ message: 'No autenticado' });
-
-  const {
-    id_instalacion,
-    nombre,
-    tipo,
-    hora_inicio,
-    hora_fin,
-    oxigeno_min,
-    oxigeno_max,
-    duracion_minutos,
-    accion,
-    activo
-  } = req.body;
-  
-  if (!id_instalacion || !nombre || !accion) {
-    return res.status(400).json({ message: 'Campos requeridos faltantes' });
-  }
-
-  // Verificar permisos sobre la instalación
-  const [perm] = await pool.query(
-    `SELECT 1 FROM instalacion i
-     LEFT JOIN usuario u ON u.id_usuario = ?
-     WHERE i.id_instalacion = ?
-       AND (i.id_usuario_creador = ? OR (u.id_empresa IS NOT NULL AND u.id_empresa = i.id_empresa))
-     LIMIT 1`,
-    [userId, id_instalacion, userId]
-  );
-  if (perm.length === 0) return res.status(403).json({ message: 'Sin permiso para esta instalación' });
-
-  const [result] = await pool.query(
-    `INSERT INTO tarea_programada
-      (id_instalacion, nombre, tipo, hora_inicio, hora_fin, oxigeno_min, oxigeno_max, duracion_minutos, accion, activo)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id_instalacion, nombre, tipo || 'horario', hora_inicio, hora_fin, oxigeno_min, oxigeno_max, duracion_minutos, accion, activo ? 1 : 0]
-  );
-  const [rows] = await pool.query('SELECT * FROM tarea_programada WHERE id_tarea = ?', [result.insertId]);
-  res.status(201).json(rows[0]);
-}));
-
-// Editar tarea programada
-app.put('/api/tareas-programadas/:id', authMiddleware, asyncHandler(async (req, res) => {
-  const userId = Number(req.user?.uid || 0);
-  const id = Number(req.params.id) || 0;
-  if (!userId) return res.status(401).json({ message: 'No autenticado' });
-  if (!id) return res.status(400).json({ message: 'ID inválido' });
-
-  // Verificar permisos sobre la tarea (a través de la instalación)
-  const [perm] = await pool.query(
-    `SELECT 1 FROM tarea_programada tp
-     JOIN instalacion i ON i.id_instalacion = tp.id_instalacion
-     LEFT JOIN usuario u ON u.id_usuario = ?
-     WHERE tp.id_tarea = ?
-       AND (i.id_usuario_creador = ? OR (u.id_empresa IS NOT NULL AND u.id_empresa = i.id_empresa))
-     LIMIT 1`,
-    [userId, id, userId]
-  );
-  if (perm.length === 0) return res.status(403).json({ message: 'Sin permiso para esta tarea' });
-
-  const fields = req.body;
-  const sets = [];
-  const vals = [];
-  for (const k of Object.keys(fields)) {
-    sets.push(`${k} = ?`);
-    vals.push(fields[k]);
-  }
-  if (sets.length === 0) return res.status(400).json({ message: 'Nada que actualizar' });
-  vals.push(id);
-  await pool.query(`UPDATE tarea_programada SET ${sets.join(', ')} WHERE id_tarea = ?`, vals);
-  const [rows] = await pool.query('SELECT * FROM tarea_programada WHERE id_tarea = ?', [id]);
-  res.json(rows[0]);
-}));
-
-// Eliminar tarea programada
-app.delete('/api/tareas-programadas/:id', authMiddleware, asyncHandler(async (req, res) => {
-  const userId = Number(req.user?.uid || 0);
-  const id = Number(req.params.id) || 0;
-  if (!userId) return res.status(401).json({ message: 'No autenticado' });
-  if (!id) return res.status(400).json({ message: 'ID inválido' });
-
-  // Verificar permisos sobre la tarea (a través de la instalación)
-  const [perm] = await pool.query(
-    `SELECT 1 FROM tarea_programada tp
-     JOIN instalacion i ON i.id_instalacion = tp.id_instalacion
-     LEFT JOIN usuario u ON u.id_usuario = ?
-     WHERE tp.id_tarea = ?
-       AND (i.id_usuario_creador = ? OR (u.id_empresa IS NOT NULL AND u.id_empresa = i.id_empresa))
-     LIMIT 1`,
-    [userId, id, userId]
-  );
-  if (perm.length === 0) return res.status(403).json({ message: 'Sin permiso para esta tarea' });
-
-  await pool.query('DELETE FROM tarea_programada WHERE id_tarea = ?', [id]);
-  res.json({ ok: true, id });
-}));
-
-// Sensores por instalación con autenticación y validación de permisos
+// Sensores por instalación
 app.get('/api/instalaciones/:id/sensores', authMiddleware, asyncHandler(async (req, res) => {
   const userId = Number(req.user?.uid || 0);
   const id = Number(req.params.id) || 0;
   if (!userId) return res.status(401).json({ message: 'No autenticado' });
   if (!id) return res.status(400).json({ message: 'ID inválido' });
 
-  // Validar que la instalación pertenezca al usuario
+  // Verificar permisos
   const [perm] = await pool.query(
-    `SELECT 1 FROM instalacion i
-     LEFT JOIN usuario u ON u.id_usuario = ?
-     WHERE i.id_instalacion = ?
-       AND COALESCE(i.estado_operativo, 'activo') <> 'eliminado'
-       AND (i.id_usuario_creador = ? OR (u.id_empresa IS NOT NULL AND u.id_empresa = i.id_empresa))
-     LIMIT 1`,
-    [userId, id, userId]
+    `SELECT 1 FROM asignacion_usuario WHERE id_usuario = ? AND id_instalacion = ?`,
+    [userId, id]
   );
   if (perm.length === 0) return res.status(403).json({ message: 'Sin permiso para esta instalación' });
 
   const [rows] = await pool.query(
     `SELECT 
         si.id_sensor_instalado,
-        COALESCE(si.nombre, si.alias, CONCAT('Sensor ', si.id_sensor_instalado)) AS nombre_sensor,
-        si.estado,
+        COALESCE(si.descripcion, CONCAT('Sensor ', si.id_sensor_instalado)) AS nombre_sensor,
+        'activo' AS estado,
         cs.nombre AS tipo_sensor,
-        p.nombre  AS parametro,
-        p.unidad  AS unidad,
-        (SELECT CONCAT(r.fecha, ' ', r.hora, ' • ', r.promedio)
-           FROM resumen_lectura_horaria r
-          WHERE r.id_sensor_instalado = si.id_sensor_instalado
-          ORDER BY r.fecha DESC, r.hora DESC
-          LIMIT 1) AS ultima_lectura
+        cs.unidad AS unidad,
+        'Sin lecturas' AS ultima_lectura
      FROM sensor_instalado si
-     LEFT JOIN catalogo_sensores cs 
-            ON cs.id_catalogo_sensor = si.id_catalogo_sensor
-     LEFT JOIN parametros p 
-            ON p.id_parametro = si.id_parametro
-    WHERE si.id_instalacion = ?
-    ORDER BY si.id_sensor_instalado DESC`,
+     LEFT JOIN catalogo_sensores cs ON cs.id_sensor = si.id_sensor
+     WHERE si.id_instalacion = ?
+     ORDER BY si.id_sensor_instalado DESC`,
     [id]
   );
 
   res.json(rows);
 }));
 
-// === whoami (debug) ===
+// =====================
+// LECTURAS RESUMIDAS
+// =====================
+app.get('/api/lecturas/resumen', asyncHandler(async (_req, res) => {
+  const [rows] = await pool.query(
+    `SELECT 
+        NULL AS id_resumen,
+        rlh.id_sensor_instalado,
+        DATE(rlh.fecha_hora) AS fecha,
+        TIME(rlh.fecha_hora) AS hora,
+        rlh.avg_val AS promedio,
+        rlh.cnt AS registros
+     FROM resumen_lectura_horaria rlh
+     ORDER BY rlh.fecha_hora DESC
+     LIMIT 20`
+  );
+  res.json(rows);
+}));
+
+// ===== whoami (debug) =====
 app.get('/whoami', (_req, res) => {
   const nets = os.networkInterfaces();
   let lanIP = '127.0.0.1';
@@ -519,7 +323,6 @@ app.use((err, _req, res, _next) => {
     await c.ping();
     c.release();
 
-    // Detectar IP LAN
     const nets = os.networkInterfaces();
     let lanIP = '127.0.0.1';
     for (const name of Object.keys(nets)) {
@@ -534,8 +337,7 @@ app.use((err, _req, res, _next) => {
       console.log('✅ API corriendo en:');
       console.log(`   • Local: http://127.0.0.1:${PORT}`);
       console.log(`   • LAN:   http://${lanIP}:${PORT}`);
-      console.log('   Endpoints: GET/POST /api/instalaciones, /api/instalaciones/:id/sensores, /api/tareas-programadas');
-      console.log('   Usando columna ACTIVO para validación de usuarios');
+      console.log('   ✨ Adaptado a tu schema de base de datos');
     });
   } catch (e) {
     console.error('❌ No se pudo conectar a MySQL:', e.code, e.message);
