@@ -1,4 +1,3 @@
-
 require('dotenv').config();
 const express = require('express');
 const mysql = require('mysql2/promise');
@@ -58,7 +57,7 @@ app.get('/', (_req, res) => {
     service: 'aquasense-api',
     endpoints: [
       '/debug/db-ping',
-      '/api/instalaciones',
+      '/api/instalaciones (GET/POST)',
       '/api/instalaciones/:id/sensores',
       '/api/lecturas/resumen',
       '/api/instalaciones/ping',
@@ -79,27 +78,37 @@ app.get('/api/instalaciones/ping', (_req, res) => {
 // AUTH
 // =====================
 app.post(['/api/auth/register', '/auth/register'], asyncHandler(async (req, res) => {
-  const { nombre, rol, correo, password } = req.body;
-  if (!nombre || !rol || !correo || !password) {
+  const { nombre_completo, correo, password, id_rol, telefono } = req.body;
+  
+  // Mapeamos los parámetros que puede enviar el cliente Flutter
+  const nombre = nombre_completo || req.body.nombre;
+  const idRol = id_rol || req.body.idRol || req.body.rol;
+  
+  if (!nombre || !correo || !password || !idRol) {
     return res.status(400).json({ message: 'Campos incompletos' });
   }
 
-  const [roles] = await pool.query('SELECT id_rol FROM tipo_rol WHERE nombre = ?', [rol]);
+  // Verificar que el rol existe
+  const [roles] = await pool.query('SELECT id_rol FROM tipo_rol WHERE id_rol = ? OR nombre = ?', [idRol, idRol]);
   if (roles.length === 0) return res.status(400).json({ message: 'Rol inválido' });
-  const idRol = roles[0].id_rol;
+  const finalIdRol = roles[0].id_rol;
 
   const [exist] = await pool.query('SELECT id_usuario FROM usuario WHERE correo = ?', [correo]);
   if (exist.length > 0) return res.status(409).json({ message: 'El correo ya existe' });
 
   const hash = await bcrypt.hash(password, 10);
-  await pool.query(
+  const [result] = await pool.query(
     `INSERT INTO usuario (id_rol, nombre_completo, correo, telefono, password_hash, estado)
-     VALUES (?, ?, ?, NULL, ?, 'activo')`,
-    [idRol, nombre, correo, hash]
+     VALUES (?, ?, ?, ?, ?, 'activo')`,
+    [finalIdRol, nombre, correo, telefono || null, hash]
   );
 
-  const token = jwt.sign({ correo, rol }, JWT_SECRET, { expiresIn: '2h' });
-  res.status(201).json({ message: 'Registrado', token, nombre, rol, correo });
+  // Obtener el rol nombre para el token
+  const [roleData] = await pool.query('SELECT nombre FROM tipo_rol WHERE id_rol = ?', [finalIdRol]);
+  const rolNombre = roleData[0]?.nombre || 'usuario';
+
+  const token = jwt.sign({ uid: result.insertId, correo, rol: rolNombre }, JWT_SECRET, { expiresIn: '8h' });
+  res.status(201).json({ message: 'Registrado', token, nombre, rol: rolNombre, correo });
 }));
 
 app.post(['/api/auth/login', '/auth/login'], asyncHandler(async (req, res) => {
@@ -197,6 +206,72 @@ app.get('/api/instalaciones', authMiddleware, asyncHandler(async (req, res) => {
     [userId, userId]
   );
   res.json(rows);
+}));
+
+// Crear instalación (asigna al usuario creador y opcionalmente a su empresa)
+app.post('/api/instalaciones', authMiddleware, asyncHandler(async (req, res) => {
+  const userId = Number(req.user?.uid || 0);
+  if (!userId) return res.status(401).json({ message: 'No autenticado' });
+
+  const {
+    nombre,
+    id_empresa,          // opcional desde el cliente
+    fecha_instalacion,   // opcional; si no viene, hoy
+    estado = 'activo',
+    uso = 'acuicultura',
+    descripcion = ''
+  } = req.body || {};
+
+  if (!nombre || typeof nombre !== 'string' || !nombre.trim()) {
+    return res.status(400).json({ message: 'nombre requerido' });
+  }
+
+  // Obtener empresa del usuario si no se especifica
+  let idEmpresa = id_empresa;
+  if (!idEmpresa) {
+    const [urows] = await pool.query(
+      'SELECT id_empresa FROM usuario WHERE id_usuario = ? LIMIT 1',
+      [userId]
+    );
+    idEmpresa = urows.length ? urows[0].id_empresa : null;
+  }
+
+  // Fecha por defecto hoy
+  const fechaFinal = fecha_instalacion || new Date().toISOString().slice(0,10); // yyyy-MM-dd
+
+  // Inserta usando las columnas reales de tu tabla
+  const [result] = await pool.query(
+    `INSERT INTO instalacion
+       (id_usuario_creador, id_empresa, nombre_instalacion, descripcion, estado_operativo, fecha_instalacion, tipo_uso)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      userId,
+      idEmpresa,
+      nombre.trim(),
+      descripcion || '',
+      estado || 'activo',
+      fechaFinal,
+      uso || 'acuicultura'
+    ]
+  );
+
+  // Devolver la instalación creada en el formato esperado por el cliente
+  const [rows] = await pool.query(
+    `SELECT 
+        i.id_instalacion AS id,
+        i.nombre_instalacion AS nombre,
+        COALESCE(NULLIF(i.descripcion,''), '') AS descripcion,
+        i.estado_operativo AS estado,
+        i.fecha_instalacion AS fechaInstalacion,
+        i.tipo_uso AS uso,
+        i.id_usuario_creador AS idUsuarioCreador,
+        i.id_empresa AS idEmpresa
+     FROM instalacion i
+    WHERE i.id_instalacion = ?`,
+    [result.insertId]
+  );
+
+  res.status(201).json(rows[0]);
 }));
 
 // Eliminación suave de instalación (marca estado_operativo='eliminado')
@@ -401,7 +476,6 @@ app.get('/api/instalaciones/:id/sensores', authMiddleware, asyncHandler(async (r
 
 // === whoami (debug) ===
 app.get('/whoami', (_req, res) => {
-  const os = require('os');
   const nets = os.networkInterfaces();
   let lanIP = '127.0.0.1';
   for (const name of Object.keys(nets)) {
@@ -460,7 +534,7 @@ app.use((err, _req, res, _next) => {
       console.log('✅ API corriendo en:');
       console.log(`   • Local: http://127.0.0.1:${PORT}`);
       console.log(`   • LAN:   http://${lanIP}:${PORT}`);
-      console.log('   Endpoints protegidos: /api/instalaciones, /api/instalaciones/:id/sensores, /api/tareas-programadas');
+      console.log('   Endpoints completos: GET/POST /api/instalaciones, /api/instalaciones/:id/sensores, /api/tareas-programadas');
     });
   } catch (e) {
     console.error('❌ No se pudo conectar a MySQL:', e.code, e.message);
