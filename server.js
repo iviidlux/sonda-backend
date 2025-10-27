@@ -75,7 +75,7 @@ app.get('/api/instalaciones/ping', (_req, res) => {
 });
 
 // =====================
-// AUTH
+// AUTH (USANDO COLUMNA ACTIVO)
 // =====================
 app.post(['/api/auth/register', '/auth/register'], asyncHandler(async (req, res) => {
   const { nombre_completo, correo, password, id_rol, telefono } = req.body;
@@ -98,8 +98,8 @@ app.post(['/api/auth/register', '/auth/register'], asyncHandler(async (req, res)
 
   const hash = await bcrypt.hash(password, 10);
   const [result] = await pool.query(
-    `INSERT INTO usuario (id_rol, nombre_completo, correo, telefono, password_hash, estado)
-     VALUES (?, ?, ?, ?, ?, 'activo')`,
+    `INSERT INTO usuario (id_rol, nombre_completo, correo, telefono, password_hash, activo)
+     VALUES (?, ?, ?, ?, ?, 1)`,
     [finalIdRol, nombre, correo, telefono || null, hash]
   );
 
@@ -116,7 +116,7 @@ app.post(['/api/auth/login', '/auth/login'], asyncHandler(async (req, res) => {
   if (!correo || !password) return res.status(400).json({ message: 'Campos incompletos' });
 
   const [rows] = await pool.query(
-    `SELECT u.id_usuario, u.password_hash, u.estado, r.nombre AS rol, u.nombre_completo
+    `SELECT u.id_usuario, u.password_hash, u.activo, r.nombre AS rol, u.nombre_completo
        FROM usuario u
        JOIN tipo_rol r ON r.id_rol = u.id_rol
       WHERE u.correo = ?`,
@@ -125,7 +125,7 @@ app.post(['/api/auth/login', '/auth/login'], asyncHandler(async (req, res) => {
 
   if (rows.length === 0) return res.status(401).json({ message: 'Credenciales inválidas' });
   const u = rows[0];
-  if (u.estado !== 'activo') return res.status(403).json({ message: 'Usuario inactivo' });
+  if (u.activo !== 1) return res.status(403).json({ message: 'Usuario inactivo' });
 
   const ok = await bcrypt.compare(password, u.password_hash);
   if (!ok) return res.status(401).json({ message: 'Credenciales inválidas' });
@@ -142,14 +142,14 @@ app.post(['/api/auth/change-password', '/auth/change-password'], asyncHandler(as
   }
 
   const [rows] = await pool.query(
-    `SELECT id_usuario, password_hash, estado
+    `SELECT id_usuario, password_hash, activo
        FROM usuario
       WHERE correo = ?`,
     [correo]
   );
   if (rows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado' });
   const u = rows[0];
-  if (u.estado !== 'activo') return res.status(403).json({ message: 'Usuario inactivo' });
+  if (u.activo !== 1) return res.status(403).json({ message: 'Usuario inactivo' });
 
   const ok = await bcrypt.compare(currentPassword, u.password_hash);
   if (!ok) return res.status(401).json({ message: 'Contraseña actual incorrecta' });
@@ -534,7 +534,8 @@ app.use((err, _req, res, _next) => {
       console.log('✅ API corriendo en:');
       console.log(`   • Local: http://127.0.0.1:${PORT}`);
       console.log(`   • LAN:   http://${lanIP}:${PORT}`);
-      console.log('   Endpoints completos: GET/POST /api/instalaciones, /api/instalaciones/:id/sensores, /api/tareas-programadas');
+      console.log('   Endpoints: GET/POST /api/instalaciones, /api/instalaciones/:id/sensores, /api/tareas-programadas');
+      console.log('   Usando columna ACTIVO para validación de usuarios');
     });
   } catch (e) {
     console.error('❌ No se pudo conectar a MySQL:', e.code, e.message);
