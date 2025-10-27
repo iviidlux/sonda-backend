@@ -291,6 +291,175 @@ app.get('/whoami', (_req, res) => {
   res.json({ lan: lanIP, time: new Date().toISOString() });
 });
 
+// =====================
+// TAREAS PROGRAMADAS  
+// =====================
+
+// Listar tareas por instalación
+app.get('/api/tareas-programadas/:idInstalacion', authMiddleware, asyncHandler(async (req, res) => {
+  const userId = Number(req.user?.uid || 0);
+  const idInstalacion = Number(req.params.idInstalacion) || 0;
+  
+  console.log('📋 Listando tareas para instalación:', idInstalacion, 'usuario:', userId);
+  
+  if (!userId) return res.status(401).json({ message: 'No autenticado' });
+  if (!idInstalacion) return res.status(400).json({ message: 'ID de instalación inválido' });
+
+  // Verificar que el usuario tenga acceso a la instalación
+  const [permisos] = await pool.query(
+    `SELECT 1 FROM asignacion_usuario WHERE id_usuario = ? AND id_instalacion = ?`,
+    [userId, idInstalacion]
+  );
+  
+  if (permisos.length === 0) {
+    return res.status(403).json({ message: 'Sin permiso para esta instalación' });
+  }
+
+  // Buscar tareas programadas (ajustada a tu schema real)
+  // Nota: Puede que necesites ajustar el nombre de la tabla si es diferente
+  try {
+    const [rows] = await pool.query(
+      `SELECT 
+        tp.id_tarea_programada AS id,
+        tp.nombre,
+        tp.descripcion,
+        tp.tipo,
+        tp.hora_inicio,
+        tp.hora_fin,
+        tp.activo,
+        tp.fecha_creacion AS creado
+      FROM tarea_programada tp 
+      WHERE tp.id_instalacion = ? 
+      ORDER BY tp.fecha_creacion DESC`,
+      [idInstalacion]
+    );
+
+    console.log('✅ Tareas encontradas:', rows.length);
+    res.json(rows);
+
+  } catch (dbError) {
+    console.error('❌ Error buscando tareas:', dbError.message);
+    // Si la tabla no existe, devolver array vacío
+    if (dbError.code === 'ER_NO_SUCH_TABLE') {
+      console.log('ℹ️ Tabla tarea_programada no existe, devolviendo array vacío');
+      return res.json([]);
+    }
+    res.status(500).json({ message: 'Error al buscar tareas programadas' });
+  }
+}));
+
+// Crear tarea programada
+app.post('/api/tareas-programadas', authMiddleware, asyncHandler(async (req, res) => {
+  const userId = Number(req.user?.uid || 0);
+  
+  if (!userId) return res.status(401).json({ message: 'No autenticado' });
+
+  const {
+    id_instalacion,
+    nombre,
+    descripcion = '',
+    tipo = 'horario',
+    hora_inicio,
+    hora_fin,
+    activo = true
+  } = req.body;
+  
+  console.log('📝 Creando tarea programada:', nombre);
+
+  if (!id_instalacion || !nombre) {
+    return res.status(400).json({ message: 'id_instalacion y nombre son requeridos' });
+  }
+
+  // Verificar permisos sobre la instalación
+  const [permisos] = await pool.query(
+    `SELECT 1 FROM asignacion_usuario WHERE id_usuario = ? AND id_instalacion = ?`,
+    [userId, id_instalacion]
+  );
+  
+  if (permisos.length === 0) {
+    return res.status(403).json({ message: 'Sin permiso para esta instalación' });
+  }
+
+  try {
+    const [result] = await pool.query(
+      `INSERT INTO tarea_programada 
+       (id_instalacion, nombre, descripcion, tipo, hora_inicio, hora_fin, activo)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id_instalacion, nombre, descripcion, tipo, hora_inicio, hora_fin, activo ? 1 : 0]
+    );
+
+    const [rows] = await pool.query(
+      `SELECT 
+        tp.id_tarea_programada AS id,
+        tp.nombre,
+        tp.descripcion,
+        tp.tipo,
+        tp.hora_inicio,
+        tp.hora_fin,
+        tp.activo,
+        tp.fecha_creacion AS creado
+      FROM tarea_programada tp 
+      WHERE tp.id_tarea_programada = ?`,
+      [result.insertId]
+    );
+
+    console.log('✅ Tarea programada creada:', rows[0]);
+    res.status(201).json(rows[0]);
+
+  } catch (dbError) {
+    console.error('❌ Error creando tarea:', dbError.message);
+    if (dbError.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(501).json({ message: 'Funcionalidad de tareas programadas no implementada aún' });
+    }
+    res.status(500).json({ message: 'Error al crear tarea programada' });
+  }
+}));
+
+// Eliminar tarea programada
+app.delete('/api/tareas-programadas/:id', authMiddleware, asyncHandler(async (req, res) => {
+  const userId = Number(req.user?.uid || 0);
+  const tareaId = Number(req.params.id) || 0;
+  
+  if (!userId) return res.status(401).json({ message: 'No autenticado' });
+  if (!tareaId) return res.status(400).json({ message: 'ID inválido' });
+
+  console.log('🗑️ Eliminando tarea:', tareaId, 'usuario:', userId);
+
+  try {
+    // Verificar permisos (que la tarea pertenezca a una instalación del usuario)
+    const [permisos] = await pool.query(
+      `SELECT 1 FROM tarea_programada tp
+       JOIN asignacion_usuario au ON au.id_instalacion = tp.id_instalacion
+       WHERE tp.id_tarea_programada = ? AND au.id_usuario = ?`,
+      [tareaId, userId]
+    );
+
+    if (permisos.length === 0) {
+      return res.status(403).json({ message: 'Sin permiso para eliminar esta tarea' });
+    }
+
+    const [result] = await pool.query(
+      `DELETE FROM tarea_programada WHERE id_tarea_programada = ?`,
+      [tareaId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Tarea no encontrada' });
+    }
+
+    console.log('✅ Tarea eliminada');
+    res.json({ ok: true, id: tareaId });
+
+  } catch (dbError) {
+    console.error('❌ Error eliminando tarea:', dbError.message);
+    if (dbError.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(501).json({ message: 'Funcionalidad de tareas programadas no implementada aún' });
+    }
+    res.status(500).json({ message: 'Error al eliminar tarea programada' });
+  }
+}));
+
+
 // 404
 app.use((req, res) => {
   res.status(404).json({ message: 'Ruta no encontrada' });
